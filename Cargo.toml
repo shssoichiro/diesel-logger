@@ -10,6 +10,9 @@ homepage = "https://github.com/shssoichiro/diesel-logger"
 license = "MIT"
 repository = "https://github.com/shssoichiro/diesel-logger"
 
+[badges]
+maintenance = { status = "as-is" }
+
 [dependencies]
 diesel = "1.0.0"
 log = "0.4.1"
