@@ -1,0 +1,15 @@
+[package]
+name = "diesel_logger"
+version = "0.1.1"
+authors = ["Josh Holmer <jholmer.in@gmail.com>"]
+description = "Times and logs queries executed by diesel"
+exclude = [
+    "tests/*",
+]
+homepage = "https://github.com/shssoichiro/diesel-logger"
+license = "MIT"
+repository = "https://github.com/shssoichiro/diesel-logger"
+
+[dependencies]
+diesel = "1.0.0"
+log = "0.4.1"
