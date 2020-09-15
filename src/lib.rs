@@ -40,7 +40,11 @@ where
     C: Connection + Send + 'static,
 {
     fn batch_execute(&self, query: &str) -> QueryResult<()> {
-        self.0.batch_execute(query)
+        let start_time = Instant::now();
+        let result = self.0.batch_execute(query);
+        let duration = start_time.elapsed();
+        log_query(query, duration);
+        result
     }
 }
 
