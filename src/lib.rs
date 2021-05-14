@@ -173,18 +173,18 @@ impl<C: Connection> LoggingTransactionManager<C> {
 fn log_query(query: &str, duration: Duration) {
     if duration.as_secs() >= 5 {
         warn!(
-            "Slow query ran in {:.2} seconds: {}",
+            "SLOW QUERY [{:.2} s]: {}",
             duration_to_secs(duration),
             query
         );
     } else if duration.as_secs() >= 1 {
         info!(
-            "Slow query ran in {:.2} seconds: {}",
+            "SLOW QUERY [{:.2} s]: {}",
             duration_to_secs(duration),
             query
         );
     } else {
-        debug!("Query ran in {:.1} ms: {}", duration_to_ms(duration), query);
+        debug!("QUERY: [{:.1}ms]: {}", duration_to_ms(duration), query);
     }
 }
 
