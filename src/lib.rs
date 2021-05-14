@@ -14,8 +14,6 @@ use diesel::prelude::*;
 use diesel::query_builder::{AsQuery, QueryFragment, QueryId};
 use diesel::query_dsl::CompatibleType;
 use diesel::r2d2::R2D2Connection;
-use std::sync::Arc;
-use std::sync::Weak;
 
 /// Wraps a diesel `Connection` to time and log each query using
 /// the configured logger for the `log` crate.
@@ -25,21 +23,13 @@ use std::sync::Weak;
 /// and a `warn`ing on queries that take longer than 5 seconds.
 /// These thresholds will be configurable in a future version.
 pub struct LoggingConnection<C: Connection> {
-    connection: Arc<C>,
     transaction_manager: LoggingTransactionManager<C>,
 }
 
-/// Yes, Arc is not thread safe if T does not support Sync. But if we never leak a reference of
-/// connection to the outside nothing bad should happen
-unsafe impl<C: Connection + Send> Send for LoggingConnection<C> {}
-
 impl<C: Connection + Send> LoggingConnection<C> {
     pub fn new(connection: C) -> Self {
-        let connection = Arc::new(connection);
-        let transaction_manager = LoggingTransactionManager::new(Arc::<C>::downgrade(&connection));
         Self {
-            connection,
-            transaction_manager,
+            transaction_manager: LoggingTransactionManager::new(connection),
         }
     }
 }
@@ -57,7 +47,7 @@ where
 
     fn execute(&self, query: &str) -> QueryResult<usize> {
         let start_time = Instant::now();
-        let result = self.connection.execute(query);
+        let result = self.transaction_manager.connection.execute(query);
         let duration = start_time.elapsed();
         log_query(query, duration);
         result
@@ -75,7 +65,7 @@ where
         let query = source.as_query();
         let debug_query = debug_query::<Self::Backend, _>(&query).to_string();
         let start_time = Instant::now();
-        let result = self.connection.load(query);
+        let result = self.transaction_manager.connection.load(query);
         let duration = start_time.elapsed();
         log_query(&debug_query, duration);
         result
@@ -88,7 +78,7 @@ where
     {
         let debug_query = debug_query::<Self::Backend, _>(&source).to_string();
         let start_time = Instant::now();
-        let result = self.connection.execute_returning_count(source);
+        let result = self.transaction_manager.connection.execute_returning_count(source);
         let duration = start_time.elapsed();
         log_query(&debug_query, duration);
         result
@@ -105,7 +95,7 @@ where
 {
     fn batch_execute(&self, query: &str) -> QueryResult<()> {
         let start_time = Instant::now();
-        let result = self.connection.batch_execute(query);
+        let result = self.transaction_manager.connection.batch_execute(query);
         let duration = start_time.elapsed();
         log_query(query, duration);
         result
@@ -118,7 +108,7 @@ where
     <<C as Connection>::Backend as Backend>::QueryBuilder: Default,
 {
     fn ping(&self) -> QueryResult<()> {
-        self.connection.ping()
+        self.transaction_manager.connection.ping()
     }
 }
 
@@ -127,12 +117,12 @@ where
     <<C as Connection>::Backend as Backend>::QueryBuilder: Default,
 {
     fn setup(&self) -> QueryResult<usize> {
-        self.connection.setup()
+        self.transaction_manager.connection.setup()
     }
 }
 
 struct LoggingTransactionManager<C: Connection> {
-    connection: Weak<C>,
+    connection: C,
 }
 
 impl<C: 'static + Connection> TransactionManager<LoggingConnection<C>>
@@ -140,38 +130,33 @@ impl<C: 'static + Connection> TransactionManager<LoggingConnection<C>>
 where
     <C::Backend as Backend>::QueryBuilder: std::default::Default,
 {
-    fn begin_transaction(&self, conn: &LoggingConnection<C>) -> QueryResult<()> {
-        conn.connection
+    fn begin_transaction(&self, _conn: &LoggingConnection<C>) -> QueryResult<()> {
+        self.connection
             .transaction_manager()
-            .begin_transaction(&conn.connection)
+            .begin_transaction(&self.connection)
     }
 
-    fn rollback_transaction(&self, conn: &LoggingConnection<C>) -> QueryResult<()> {
-        conn.connection
+    fn rollback_transaction(&self, _conn: &LoggingConnection<C>) -> QueryResult<()> {
+        self.connection
             .transaction_manager()
-            .rollback_transaction(&conn.connection)
+            .rollback_transaction(&self.connection)
     }
 
-    fn commit_transaction(&self, conn: &LoggingConnection<C>) -> QueryResult<()> {
-        conn.connection
+    fn commit_transaction(&self, _conn: &LoggingConnection<C>) -> QueryResult<()> {
+        self.connection
             .transaction_manager()
-            .commit_transaction(&conn.connection)
+            .commit_transaction(&self.connection)
     }
 
-    /// We only need the weak reference to connection because this method does not give us
-    /// our parent connection. We are safe to unwrap here because the connectionmanager
-    /// should not be used after the connection itself gets dropped
     fn get_transaction_depth(&self) -> u32 {
         self.connection
-            .upgrade()
-            .unwrap()
             .transaction_manager()
             .get_transaction_depth()
     }
 }
 
 impl<C: Connection> LoggingTransactionManager<C> {
-    pub fn new(conn: Weak<C>) -> Self {
+    pub fn new(conn: C) -> Self {
         Self { connection: conn }
     }
 }
