@@ -38,9 +38,9 @@ impl<C: 'static + Connection> LoggingConnection<C> {
     }
 
     fn bench_query_str<F, R>(&self, query: &str, func: F) -> R
-        where
-            F: Fn() -> R,
-            <C::Backend as Backend>::QueryBuilder: Default,
+    where
+        F: Fn() -> R,
+        <C::Backend as Backend>::QueryBuilder: Default,
     {
         let start_time = Instant::now();
         let result = func();
@@ -91,9 +91,11 @@ where
         Self: Sized,
         T: QueryFragment<Self::Backend> + QueryId,
     {
-        self.bench_query(source, || self.transaction_manager
+        self.bench_query(source, || {
+            self.transaction_manager
                 .connection
-                .execute_returning_count(source))
+                .execute_returning_count(source)
+        })
     }
 
     fn transaction_manager(&self) -> &dyn TransactionManager<Self> {
@@ -107,7 +109,9 @@ where
     <C::Backend as Backend>::QueryBuilder: Default,
 {
     fn batch_execute(&self, query: &str) -> QueryResult<()> {
-        self.bench_query_str(query, || self.transaction_manager.connection.batch_execute(query))
+        self.bench_query_str(query, || {
+            self.transaction_manager.connection.batch_execute(query)
+        })
     }
 }
 
