@@ -9,6 +9,7 @@ use diesel::connection::{SimpleConnection, TransactionManager};
 use diesel::debug_query;
 use diesel::deserialize::FromSqlRow;
 use diesel::expression::QueryMetadata;
+use diesel::migration::MigrationConnection;
 use diesel::prelude::*;
 use diesel::query_builder::{AsQuery, QueryFragment, QueryId};
 use diesel::query_dsl::CompatibleType;
@@ -121,6 +122,15 @@ where
     }
 }
 
+impl<C: 'static + Connection + MigrationConnection> MigrationConnection for LoggingConnection<C>
+where
+    <<C as Connection>::Backend as Backend>::QueryBuilder: Default,
+{
+    fn setup(&self) -> QueryResult<usize> {
+        self.connection.setup()
+    }
+}
+
 struct LoggingTransactionManager<C: Connection> {
     connection: Weak<C>,
 }
@@ -152,7 +162,9 @@ where
     /// our parent connection. We are safe to unwrap here because the connectionmanager
     /// should not be used after the connection itself gets dropped
     fn get_transaction_depth(&self) -> u32 {
-        self.connection.upgrade().unwrap()
+        self.connection
+            .upgrade()
+            .unwrap()
             .transaction_manager()
             .get_transaction_depth()
     }
@@ -160,9 +172,7 @@ where
 
 impl<C: Connection> LoggingTransactionManager<C> {
     pub fn new(conn: Weak<C>) -> Self {
-        Self {
-            connection: conn,
-        }
+        Self { connection: conn }
     }
 }
 
