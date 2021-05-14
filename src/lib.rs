@@ -14,6 +14,7 @@ use diesel::query_builder::{AsQuery, QueryFragment, QueryId};
 use diesel::query_dsl::CompatibleType;
 use diesel::r2d2::R2D2Connection;
 use std::sync::Arc;
+use std::sync::Weak;
 
 /// Wraps a diesel `Connection` to time and log each query using
 /// the configured logger for the `log` crate.
@@ -27,16 +28,17 @@ pub struct LoggingConnection<C: Connection> {
     transaction_manager: LoggingTransactionManager<C>,
 }
 
-/// We are only wrapping SqliteConnection
-/// As we are using Arc this should be thread safe
+/// Yes, Arc is not thread safe if T does not support Sync. But if we never leak a reference of
+/// connection to the outside nothing bad should happen
 unsafe impl<C: Connection + Send> Send for LoggingConnection<C> {}
 
 impl<C: Connection + Send> LoggingConnection<C> {
     pub fn new(connection: C) -> Self {
         let connection = Arc::new(connection);
+        let transaction_manager = LoggingTransactionManager::new(Arc::<C>::downgrade(&connection));
         Self {
-            connection: connection.clone(),
-            transaction_manager: LoggingTransactionManager::new(connection),
+            connection,
+            transaction_manager,
         }
     }
 }
@@ -120,7 +122,7 @@ where
 }
 
 struct LoggingTransactionManager<C: Connection> {
-    connection: Arc<C>,
+    connection: Weak<C>,
 }
 
 impl<C: 'static + Connection> TransactionManager<LoggingConnection<C>>
@@ -128,35 +130,38 @@ impl<C: 'static + Connection> TransactionManager<LoggingConnection<C>>
 where
     <C::Backend as Backend>::QueryBuilder: std::default::Default,
 {
-    fn begin_transaction(&self, _conn: &LoggingConnection<C>) -> QueryResult<()> {
-        self.connection
+    fn begin_transaction(&self, conn: &LoggingConnection<C>) -> QueryResult<()> {
+        conn.connection
             .transaction_manager()
-            .begin_transaction(&self.connection)
+            .begin_transaction(&conn.connection)
     }
 
-    fn rollback_transaction(&self, _conn: &LoggingConnection<C>) -> QueryResult<()> {
-        self.connection
+    fn rollback_transaction(&self, conn: &LoggingConnection<C>) -> QueryResult<()> {
+        conn.connection
             .transaction_manager()
-            .rollback_transaction(&self.connection)
+            .rollback_transaction(&conn.connection)
     }
 
-    fn commit_transaction(&self, _conn: &LoggingConnection<C>) -> QueryResult<()> {
-        self.connection
+    fn commit_transaction(&self, conn: &LoggingConnection<C>) -> QueryResult<()> {
+        conn.connection
             .transaction_manager()
-            .commit_transaction(&self.connection)
+            .commit_transaction(&conn.connection)
     }
 
+    /// We only need the weak reference to connection because this method does not give us
+    /// our parent connection. We are safe to unwrap here because the connectionmanager
+    /// should not be used after the connection itself gets dropped
     fn get_transaction_depth(&self) -> u32 {
-        self.connection
+        self.connection.upgrade().unwrap()
             .transaction_manager()
             .get_transaction_depth()
     }
 }
 
 impl<C: Connection> LoggingTransactionManager<C> {
-    pub fn new(conn: Arc<C>) -> Self {
+    pub fn new(conn: Weak<C>) -> Self {
         Self {
-            connection: conn.clone(),
+            connection: conn,
         }
     }
 }
