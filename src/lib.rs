@@ -27,19 +27,19 @@ pub struct LoggingConnection<C: Connection> {
 }
 
 impl<C: 'static + Connection> LoggingConnection<C> {
-    fn bench_query<F, R>(&self, query: &dyn QueryFragment<C::Backend>, func: F) -> R
+    fn bench_query<F, R>(query: &dyn QueryFragment<C::Backend>, func: F) -> R
     where
-        F: Fn() -> R,
+        F: FnMut() -> R,
         <C::Backend as Backend>::QueryBuilder: Default,
     {
         let debug_query =
             debug_query::<<LoggingConnection<C> as Connection>::Backend, _>(&query).to_string();
-        self.bench_query_str(&debug_query, func)
+        Self::bench_query_str(&debug_query, func)
     }
 
-    fn bench_query_str<F, R>(&self, query: &str, func: F) -> R
+    fn bench_query_str<F, R>(query: &str, mut func: F) -> R
     where
-        F: Fn() -> R,
+        F: FnMut() -> R,
         <C::Backend as Backend>::QueryBuilder: Default,
     {
         let start_time = Instant::now();
@@ -64,16 +64,17 @@ where
     <C::Backend as Backend>::QueryBuilder: Default,
 {
     type Backend = C::Backend;
+    type TransactionManager = LoggingTransactionManager<C>;
 
     fn establish(database_url: &str) -> ConnectionResult<Self> {
         Ok(LoggingConnection::new(C::establish(database_url)?))
     }
 
-    fn execute(&self, query: &str) -> QueryResult<usize> {
-        self.bench_query_str(query, || self.transaction_manager.connection.execute(query))
+    fn execute(&mut self, query: &str) -> QueryResult<usize> {
+        Self::bench_query_str(query, || self.transaction_manager.connection.execute(query))
     }
 
-    fn load<T, U, ST>(&self, source: T) -> QueryResult<Vec<U>>
+    fn load<T, U, ST>(&mut self, source: T) -> QueryResult<Vec<U>>
     where
         Self: Sized,
         T: AsQuery,
@@ -83,23 +84,23 @@ where
         Self::Backend: QueryMetadata<T::SqlType>,
     {
         let query = source.as_query();
-        self.bench_query(&query, || self.transaction_manager.connection.load(&query))
+        Self::bench_query(&query, || self.transaction_manager.connection.load(&query))
     }
 
-    fn execute_returning_count<T>(&self, source: &T) -> QueryResult<usize>
+    fn execute_returning_count<T>(&mut self, source: &T) -> QueryResult<usize>
     where
         Self: Sized,
         T: QueryFragment<Self::Backend> + QueryId,
     {
-        self.bench_query(source, || {
+        Self::bench_query(source, || {
             self.transaction_manager
                 .connection
                 .execute_returning_count(source)
         })
     }
 
-    fn transaction_manager(&self) -> &dyn TransactionManager<Self> {
-        &self.transaction_manager
+    fn transaction_state(&mut self) -> &mut <Self::TransactionManager as TransactionManager<LoggingConnection<C>>>::TransactionStateData {
+        &mut self.transaction_manager
     }
 }
 
@@ -108,8 +109,8 @@ where
     C: SimpleConnection + Connection + Send + 'static,
     <C::Backend as Backend>::QueryBuilder: Default,
 {
-    fn batch_execute(&self, query: &str) -> QueryResult<()> {
-        self.bench_query_str(query, || {
+    fn batch_execute(&mut self, query: &str) -> QueryResult<()> {
+        Self::bench_query_str(query, || {
             self.transaction_manager.connection.batch_execute(query)
         })
     }
@@ -120,7 +121,7 @@ where
     C: R2D2Connection + Connection + Send + 'static,
     <C::Backend as Backend>::QueryBuilder: Default,
 {
-    fn ping(&self) -> QueryResult<()> {
+    fn ping(&mut self) -> QueryResult<()> {
         self.transaction_manager.connection.ping()
     }
 }
@@ -129,12 +130,12 @@ impl<C: 'static + Connection + MigrationConnection> MigrationConnection for Logg
 where
     <C::Backend as Backend>::QueryBuilder: Default,
 {
-    fn setup(&self) -> QueryResult<usize> {
+    fn setup(&mut self) -> QueryResult<usize> {
         self.transaction_manager.connection.setup()
     }
 }
 
-struct LoggingTransactionManager<C: Connection> {
+pub struct LoggingTransactionManager<C: Connection> {
     connection: C,
 }
 
@@ -143,28 +144,22 @@ impl<C: 'static + Connection> TransactionManager<LoggingConnection<C>>
 where
     <C::Backend as Backend>::QueryBuilder: Default,
 {
-    fn begin_transaction(&self, _conn: &LoggingConnection<C>) -> QueryResult<()> {
-        self.connection
-            .transaction_manager()
-            .begin_transaction(&self.connection)
+    type TransactionStateData = Self;
+
+    fn begin_transaction(conn: &mut LoggingConnection<C>) -> QueryResult<()> {
+        <<C as Connection>::TransactionManager as TransactionManager<C>>::begin_transaction(&mut conn.transaction_manager.connection)
     }
 
-    fn rollback_transaction(&self, _conn: &LoggingConnection<C>) -> QueryResult<()> {
-        self.connection
-            .transaction_manager()
-            .rollback_transaction(&self.connection)
+    fn rollback_transaction(conn: &mut LoggingConnection<C>) -> QueryResult<()> {
+        <<C as Connection>::TransactionManager as TransactionManager<C>>::rollback_transaction(&mut conn.transaction_manager.connection)
     }
 
-    fn commit_transaction(&self, _conn: &LoggingConnection<C>) -> QueryResult<()> {
-        self.connection
-            .transaction_manager()
-            .commit_transaction(&self.connection)
+    fn commit_transaction(conn: &mut LoggingConnection<C>) -> QueryResult<()> {
+        <<C as Connection>::TransactionManager as TransactionManager<C>>::commit_transaction(&mut conn.transaction_manager.connection)
     }
 
-    fn get_transaction_depth(&self) -> u32 {
-        self.connection
-            .transaction_manager()
-            .get_transaction_depth()
+    fn get_transaction_depth(conn: &mut LoggingConnection<C>) -> u32 {
+        <<C as Connection>::TransactionManager as TransactionManager<C>>::get_transaction_depth(&mut conn.transaction_manager.connection)
     }
 }
 
