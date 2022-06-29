@@ -2,16 +2,21 @@ extern crate diesel;
 #[macro_use]
 extern crate log;
 
-use std::ops::Deref;
+use std::fmt::Display;
 use std::time::{Duration, Instant};
 
-use diesel::backend::{Backend, UsesAnsiSavepointSyntax};
-use diesel::connection::{AnsiTransactionManager, SimpleConnection};
+use diesel::backend::Backend;
+use diesel::connection::{
+    Connection, ConnectionGatWorkaround, LoadRowIter, SimpleConnection, TransactionManager,
+    TransactionManagerStatus,
+};
 use diesel::debug_query;
-use diesel::deserialize::QueryableByName;
+use diesel::expression::QueryMetadata;
+use diesel::migration::MigrationConnection;
 use diesel::prelude::*;
-use diesel::query_builder::{AsQuery, QueryFragment, QueryId};
-use diesel::sql_types::HasSqlType;
+use diesel::query_builder::{AsQuery, Query, QueryFragment, QueryId};
+use diesel::r2d2::R2D2Connection;
+use diesel::row::Row;
 
 /// Wraps a diesel `Connection` to time and log each query using
 /// the configured logger for the `log` crate.
@@ -20,116 +25,200 @@ use diesel::sql_types::HasSqlType;
 /// an `info` on queries that take longer than 1 second,
 /// and a `warn`ing on queries that take longer than 5 seconds.
 /// These thresholds will be configurable in a future version.
-pub struct LoggingConnection<C: Connection>(C);
+pub struct LoggingConnection<C: Connection> {
+    connection: C,
+    transaction_manager: LoggingTransactionManager,
+}
 
-impl<C: Connection> LoggingConnection<C> {
-    pub fn new(conn: C) -> Self {
-        LoggingConnection(conn)
+impl<C> LoggingConnection<C>
+where
+    C: Connection,
+{
+    fn bench_query<F, R>(query: &dyn QueryFragment<C::Backend>, func: F) -> R
+    where
+        F: FnMut() -> R,
+        C: 'static,
+        <C as Connection>::Backend: std::default::Default,
+        <C::Backend as Backend>::QueryBuilder: Default,
+    {
+        let debug_query = debug_query::<<LoggingConnection<C> as Connection>::Backend, _>(&query);
+        Self::bench_query_str(&debug_query, func)
+    }
+
+    fn bench_query_str<F, R>(query: &dyn Display, mut func: F) -> R
+    where
+        F: FnMut() -> R,
+    {
+        let start_time = Instant::now();
+        let result = func();
+        let duration = start_time.elapsed();
+        log_query(&query, duration);
+        result
+    }
+
+    fn bench_query_begin() -> Instant {
+        Instant::now()
+    }
+
+    fn bench_query_end(start_time: Instant, query: &dyn Display) {
+        let duration = start_time.elapsed();
+        log_query(&query, duration);
     }
 }
 
-impl<C: Connection> Deref for LoggingConnection<C> {
-    type Target = C;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl<C> LoggingConnection<C>
+where
+    C: Connection,
+{
+    pub fn new(connection: C) -> Self {
+        Self {
+            connection,
+            transaction_manager: Default::default(),
+        }
+    }
+}
+
+impl<C> Connection for LoggingConnection<C>
+where
+    C: Connection + 'static,
+    <C as Connection>::Backend: std::default::Default,
+    <C::Backend as Backend>::QueryBuilder: Default,
+{
+    type Backend = C::Backend;
+    type TransactionManager = LoggingTransactionManager;
+
+    fn establish(database_url: &str) -> ConnectionResult<Self> {
+        Ok(LoggingConnection::new(C::establish(database_url)?))
+    }
+
+    fn begin_test_transaction(&mut self) -> QueryResult<()> {
+        self.connection.begin_test_transaction()
+    }
+
+    fn load<'conn, 'query, T>(
+        &'conn mut self,
+        source: T,
+    ) -> QueryResult<LoadRowIter<'conn, 'query, Self, Self::Backend>>
+    where
+        Self: Sized,
+        T: 'query + Query + QueryFragment<Self::Backend> + QueryId,
+        Self::Backend: QueryMetadata<<T as AsQuery>::SqlType>,
+    {
+        let query = source.as_query();
+        let debug_string = debug_query::<<LoggingConnection<C> as Connection>::Backend, _>(&query).to_string();
+
+        let begin = Self::bench_query_begin();
+        let res = self.connection.load(query);
+        Self::bench_query_end(begin, &debug_string);
+        res
+    }
+
+    fn execute_returning_count<T>(&mut self, source: &T) -> QueryResult<usize>
+    where
+        Self: Sized,
+        T: QueryFragment<Self::Backend> + QueryId,
+    {
+        Self::bench_query(source, || self.connection.execute_returning_count(source))
+    }
+
+    fn transaction_state(&mut self) -> &mut <Self::TransactionManager as TransactionManager<LoggingConnection<C>>>::TransactionStateData{
+        &mut self.transaction_manager
     }
 }
 
 impl<C> SimpleConnection for LoggingConnection<C>
 where
-    C: Connection + Send + 'static,
-{
-    fn batch_execute(&self, query: &str) -> QueryResult<()> {
-        let start_time = Instant::now();
-        let result = self.0.batch_execute(query);
-        let duration = start_time.elapsed();
-        log_query(query, duration);
-        result
-    }
-}
-
-impl<C: Connection> Connection for LoggingConnection<C>
-where
-    C: Connection<TransactionManager = AnsiTransactionManager> + Send + 'static,
-    C::Backend: UsesAnsiSavepointSyntax,
+    C: SimpleConnection + Connection + 'static,
     <C::Backend as Backend>::QueryBuilder: Default,
 {
-    type Backend = C::Backend;
-    type TransactionManager = C::TransactionManager;
-
-    fn establish(database_url: &str) -> ConnectionResult<Self> {
-        Ok(LoggingConnection(C::establish(database_url)?))
-    }
-
-    fn execute(&self, query: &str) -> QueryResult<usize> {
-        let start_time = Instant::now();
-        let result = self.0.execute(query);
-        let duration = start_time.elapsed();
-        log_query(query, duration);
-        result
-    }
-
-    fn query_by_index<T, U>(&self, source: T) -> QueryResult<Vec<U>>
-    where
-        T: AsQuery,
-        T::Query: QueryFragment<Self::Backend> + QueryId,
-        Self::Backend: HasSqlType<T::SqlType>,
-        U: Queryable<T::SqlType, Self::Backend>,
-    {
-        let query = source.as_query();
-        let debug_query = debug_query::<Self::Backend, _>(&query).to_string();
-        let start_time = Instant::now();
-        let result = self.0.query_by_index(query);
-        let duration = start_time.elapsed();
-        log_query(&debug_query, duration);
-        result
-    }
-
-    fn query_by_name<T, U>(&self, source: &T) -> QueryResult<Vec<U>>
-    where
-        T: QueryFragment<Self::Backend> + QueryId,
-        U: QueryableByName<Self::Backend>,
-    {
-        let debug_query = debug_query::<Self::Backend, _>(&source).to_string();
-        let start_time = Instant::now();
-        let result = self.0.query_by_name(source);
-        let duration = start_time.elapsed();
-        log_query(&debug_query, duration);
-        result
-    }
-
-    fn execute_returning_count<T>(&self, source: &T) -> QueryResult<usize>
-    where
-        T: QueryFragment<Self::Backend> + QueryId,
-    {
-        let debug_query = debug_query::<Self::Backend, _>(&source).to_string();
-        let start_time = Instant::now();
-        let result = self.0.execute_returning_count(source);
-        let duration = start_time.elapsed();
-        log_query(&debug_query, duration);
-        result
-    }
-
-    fn transaction_manager(&self) -> &Self::TransactionManager {
-        self.0.transaction_manager()
+    fn batch_execute(&mut self, query: &str) -> QueryResult<()> {
+        Self::bench_query_str(&query, || self.connection.batch_execute(query))
     }
 }
 
-fn log_query(query: &str, duration: Duration) {
+impl<C> R2D2Connection for LoggingConnection<C>
+where
+    C: R2D2Connection + Connection + 'static,
+    <C::Backend as Backend>::QueryBuilder: Default,
+    <C as Connection>::Backend: std::default::Default,
+{
+    fn ping(&mut self) -> QueryResult<()> {
+        self.connection.ping()
+    }
+}
+
+impl<'a, 'conn, 'query, C, B: Backend> ConnectionGatWorkaround<'conn, 'query, B>
+    for LoggingConnection<C>
+where
+    C: 'static + Connection,
+    <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend>>::Row: Row<'conn, B>,
+{
+    type Cursor = <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend>>::Cursor;
+    type Row = <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend>>::Row;
+}
+
+impl<C> MigrationConnection for LoggingConnection<C>
+where
+    C: 'static + Connection + MigrationConnection,
+    <C::Backend as Backend>::QueryBuilder: Default,
+    <C as Connection>::Backend: std::default::Default,
+{
+    fn setup(&mut self) -> QueryResult<usize> {
+        self.connection.setup()
+    }
+}
+
+#[derive(Default)]
+pub struct LoggingTransactionManager {}
+
+impl<C> TransactionManager<LoggingConnection<C>> for LoggingTransactionManager
+where
+    C: 'static + Connection,
+    <C::Backend as Backend>::QueryBuilder: Default,
+    <C as Connection>::Backend: std::default::Default,
+{
+    type TransactionStateData = Self;
+
+    fn begin_transaction(conn: &mut LoggingConnection<C>) -> QueryResult<()> {
+        <<C as Connection>::TransactionManager as TransactionManager<C>>::begin_transaction(
+            &mut conn.connection,
+        )
+    }
+
+    fn rollback_transaction(conn: &mut LoggingConnection<C>) -> QueryResult<()> {
+        <<C as Connection>::TransactionManager as TransactionManager<C>>::rollback_transaction(
+            &mut conn.connection,
+        )
+    }
+
+    fn commit_transaction(conn: &mut LoggingConnection<C>) -> QueryResult<()> {
+        <<C as Connection>::TransactionManager as TransactionManager<C>>::commit_transaction(
+            &mut conn.connection,
+        )
+    }
+
+    fn transaction_manager_status_mut(
+        conn: &mut LoggingConnection<C>,
+    ) -> &mut TransactionManagerStatus {
+        <<C as Connection>::TransactionManager as TransactionManager<C>>::transaction_manager_status_mut(&mut conn.connection)
+    }
+}
+
+fn log_query(query: &dyn Display, duration: Duration) {
     if duration.as_secs() >= 5 {
         warn!(
-            "Slow query ran in {:.2} seconds: {}",
+            "SLOW QUERY [{:.2} s]: {}",
             duration_to_secs(duration),
             query
         );
     } else if duration.as_secs() >= 1 {
         info!(
-            "Slow query ran in {:.2} seconds: {}",
+            "SLOW QUERY [{:.2} s]: {}",
             duration_to_secs(duration),
             query
         );
     } else {
-        debug!("Query ran in {:.1} ms: {}", duration_to_ms(duration), query);
+        debug!("QUERY: [{:.1}ms]: {}", duration_to_ms(duration), query);
     }
 }
 
