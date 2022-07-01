@@ -105,7 +105,8 @@ where
         Self::Backend: QueryMetadata<<T as AsQuery>::SqlType>,
     {
         let query = source.as_query();
-        let debug_string = debug_query::<<LoggingConnection<C> as Connection>::Backend, _>(&query).to_string();
+        let debug_string =
+            debug_query::<<LoggingConnection<C> as Connection>::Backend, _>(&query).to_string();
 
         let begin = Self::bench_query_begin();
         let res = self.connection.load(query);
