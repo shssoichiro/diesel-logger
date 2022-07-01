@@ -148,7 +148,7 @@ where
     }
 }
 
-impl<'a, 'conn, 'query, C, B: Backend> ConnectionGatWorkaround<'conn, 'query, B>
+impl<'conn, 'query, C, B: Backend> ConnectionGatWorkaround<'conn, 'query, B>
     for LoggingConnection<C>
 where
     C: 'static + Connection,
