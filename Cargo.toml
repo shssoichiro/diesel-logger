@@ -1,6 +1,6 @@
 [package]
 name = "diesel_logger"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Josh Holmer <jholmer.in@gmail.com>"]
 description = "Times and logs queries executed by diesel"
 exclude = [
@@ -14,5 +14,5 @@ repository = "https://github.com/shssoichiro/diesel-logger"
 maintenance = { status = "as-is" }
 
 [dependencies]
-diesel = "1.0.0"
+diesel = { version = "2.0.0-rc.0", features = ["r2d2", "i-implement-a-third-party-backend-and-opt-into-breaking-changes"] }
 log = "0.4.1"
