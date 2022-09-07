@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use diesel::backend::Backend;
 use diesel::connection::{
     Connection, ConnectionGatWorkaround, LoadConnection, LoadRowIter, SimpleConnection,
-    TransactionManager, TransactionManagerStatus
+    TransactionManager, TransactionManagerStatus,
 };
 use diesel::debug_query;
 use diesel::expression::QueryMetadata;
@@ -118,9 +118,9 @@ where
         &'conn mut self,
         source: T,
     ) -> QueryResult<LoadRowIter<'conn, 'query, Self, Self::Backend, B>>
-        where
-            T: Query + QueryFragment<Self::Backend> + QueryId + 'query,
-            Self::Backend: QueryMetadata<T::SqlType>,
+    where
+        T: Query + QueryFragment<Self::Backend> + QueryId + 'query,
+        Self::Backend: QueryMetadata<T::SqlType>,
     {
         let query = source.as_query();
         let debug_string =
@@ -158,9 +158,11 @@ impl<'conn, 'query, C, DB: Backend, B> ConnectionGatWorkaround<'conn, 'query, DB
     for LoggingConnection<C>
 where
     C: 'static + Connection<Backend = DB> + ConnectionGatWorkaround<'conn, 'query, DB, B>,
-    <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend, B>>::Row: Row<'conn, DB>,
+    <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend, B>>::Row:
+        Row<'conn, DB>,
 {
-    type Cursor = <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend, B>>::Cursor;
+    type Cursor =
+        <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend, B>>::Cursor;
     type Row = <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend, B>>::Row;
 }
 
