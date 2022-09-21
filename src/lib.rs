@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use diesel::backend::Backend;
 use diesel::connection::{
-    Connection, ConnectionGatWorkaround, LoadRowIter, SimpleConnection, TransactionManager,
-    TransactionManagerStatus,
+    Connection, ConnectionGatWorkaround, LoadConnection, LoadRowIter, SimpleConnection,
+    TransactionManager, TransactionManagerStatus,
 };
 use diesel::debug_query;
 use diesel::expression::QueryMetadata;
@@ -95,25 +95,6 @@ where
         self.connection.begin_test_transaction()
     }
 
-    fn load<'conn, 'query, T>(
-        &'conn mut self,
-        source: T,
-    ) -> QueryResult<LoadRowIter<'conn, 'query, Self, Self::Backend>>
-    where
-        Self: Sized,
-        T: 'query + Query + QueryFragment<Self::Backend> + QueryId,
-        Self::Backend: QueryMetadata<<T as AsQuery>::SqlType>,
-    {
-        let query = source.as_query();
-        let debug_string =
-            debug_query::<<LoggingConnection<C> as Connection>::Backend, _>(&query).to_string();
-
-        let begin = Self::bench_query_begin();
-        let res = self.connection.load(query);
-        Self::bench_query_end(begin, &debug_string);
-        res
-    }
-
     fn execute_returning_count<T>(&mut self, source: &T) -> QueryResult<usize>
     where
         Self: Sized,
@@ -124,6 +105,31 @@ where
 
     fn transaction_state(&mut self) -> &mut <Self::TransactionManager as TransactionManager<LoggingConnection<C>>>::TransactionStateData{
         &mut self.transaction_manager
+    }
+}
+
+impl<B, C> LoadConnection<B> for LoggingConnection<C>
+where
+    C: LoadConnection<B> + 'static,
+    <C as Connection>::Backend: std::default::Default,
+    <C::Backend as Backend>::QueryBuilder: Default,
+{
+    fn load<'conn, 'query, T>(
+        &'conn mut self,
+        source: T,
+    ) -> QueryResult<LoadRowIter<'conn, 'query, Self, Self::Backend, B>>
+    where
+        T: Query + QueryFragment<Self::Backend> + QueryId + 'query,
+        Self::Backend: QueryMetadata<T::SqlType>,
+    {
+        let query = source.as_query();
+        let debug_string =
+            debug_query::<<LoggingConnection<C> as Connection>::Backend, _>(&query).to_string();
+
+        let begin = Self::bench_query_begin();
+        let res = self.connection.load(query);
+        Self::bench_query_end(begin, &debug_string);
+        res
     }
 }
 
@@ -148,14 +154,16 @@ where
     }
 }
 
-impl<'conn, 'query, C, B: Backend> ConnectionGatWorkaround<'conn, 'query, B>
+impl<'conn, 'query, C, DB: Backend, B> ConnectionGatWorkaround<'conn, 'query, DB, B>
     for LoggingConnection<C>
 where
-    C: 'static + Connection,
-    <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend>>::Row: Row<'conn, B>,
+    C: 'static + Connection<Backend = DB> + ConnectionGatWorkaround<'conn, 'query, DB, B>,
+    <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend, B>>::Row:
+        Row<'conn, DB>,
 {
-    type Cursor = <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend>>::Cursor;
-    type Row = <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend>>::Row;
+    type Cursor =
+        <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend, B>>::Cursor;
+    type Row = <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend, B>>::Row;
 }
 
 impl<C> MigrationConnection for LoggingConnection<C>

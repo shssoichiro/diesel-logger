@@ -14,5 +14,5 @@ repository = "https://github.com/shssoichiro/diesel-logger"
 maintenance = { status = "as-is" }
 
 [dependencies]
-diesel = { version = "2.0.0-rc.0", features = ["r2d2", "i-implement-a-third-party-backend-and-opt-into-breaking-changes"] }
+diesel = { version = "2.0", features = ["r2d2", "i-implement-a-third-party-backend-and-opt-into-breaking-changes"] }
 log = "0.4.1"
