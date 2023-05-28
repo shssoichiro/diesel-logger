@@ -1,19 +1,20 @@
 [package]
 name = "diesel_logger"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Josh Holmer <jholmer.in@gmail.com>"]
 description = "Times and logs queries executed by diesel"
 exclude = ["tests/*"]
 homepage = "https://github.com/shssoichiro/diesel-logger"
 license = "MIT"
 repository = "https://github.com/shssoichiro/diesel-logger"
+edition = "2021"
 
 [badges]
 maintenance = { status = "as-is" }
 
 [dependencies]
-diesel = { version = "2.0", features = [
+diesel = { version = "2.1", features = [
     "r2d2",
     "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
 ] }
-log = "0.4.1"
+log = "0.4.18"
