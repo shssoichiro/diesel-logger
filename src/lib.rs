@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use diesel::backend::Backend;
 use diesel::connection::{
-    Connection, ConnectionGatWorkaround, LoadConnection, LoadRowIter, SimpleConnection,
-    TransactionManager, TransactionManagerStatus,
+    Connection, ConnectionSealed, LoadConnection, SimpleConnection, TransactionManager,
+    TransactionManagerStatus,
 };
 use diesel::debug_query;
 use diesel::expression::QueryMetadata;
@@ -16,7 +16,6 @@ use diesel::migration::MigrationConnection;
 use diesel::prelude::*;
 use diesel::query_builder::{AsQuery, Query, QueryFragment, QueryId};
 use diesel::r2d2::R2D2Connection;
-use diesel::row::Row;
 
 /// Wraps a diesel `Connection` to time and log each query using
 /// the configured logger for the `log` crate.
@@ -114,10 +113,13 @@ where
     <C as Connection>::Backend: std::default::Default,
     <C::Backend as Backend>::QueryBuilder: Default,
 {
+    type Cursor<'conn, 'query> = <C as LoadConnection<B>>::Cursor<'conn, 'query>;
+    type Row<'conn, 'query> = <C as LoadConnection<B>>::Row<'conn, 'query>;
+
     fn load<'conn, 'query, T>(
         &'conn mut self,
         source: T,
-    ) -> QueryResult<LoadRowIter<'conn, 'query, Self, Self::Backend, B>>
+    ) -> QueryResult<Self::Cursor<'conn, 'query>>
     where
         T: Query + QueryFragment<Self::Backend> + QueryId + 'query,
         Self::Backend: QueryMetadata<T::SqlType>,
@@ -154,17 +156,7 @@ where
     }
 }
 
-impl<'conn, 'query, C, DB: Backend, B> ConnectionGatWorkaround<'conn, 'query, DB, B>
-    for LoggingConnection<C>
-where
-    C: 'static + Connection<Backend = DB> + ConnectionGatWorkaround<'conn, 'query, DB, B>,
-    <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend, B>>::Row:
-        Row<'conn, DB>,
-{
-    type Cursor =
-        <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend, B>>::Cursor;
-    type Row = <C as ConnectionGatWorkaround<'conn, 'query, <C as Connection>::Backend, B>>::Row;
-}
+impl<C: diesel::Connection> ConnectionSealed for LoggingConnection<C> {}
 
 impl<C> MigrationConnection for LoggingConnection<C>
 where
