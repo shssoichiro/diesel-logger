@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use diesel::backend::Backend;
 use diesel::connection::{
-    Connection, ConnectionSealed, LoadConnection, SimpleConnection, TransactionManager,
-    TransactionManagerStatus,
+    Connection, ConnectionSealed, LoadConnection, MultiConnectionHelper, SimpleConnection,
+    TransactionManager, TransactionManagerStatus,
 };
 use diesel::debug_query;
 use diesel::expression::QueryMetadata;
@@ -213,6 +213,24 @@ where
         conn: &mut LoggingConnection<C>,
     ) -> &mut TransactionManagerStatus {
         <<C as Connection>::TransactionManager as TransactionManager<C>>::transaction_manager_status_mut(&mut conn.connection)
+    }
+}
+
+impl<C> MultiConnectionHelper for LoggingConnection<C>
+where
+    C: MultiConnectionHelper<Backend = Self::Backend>,
+    Self: Connection,
+{
+    fn to_any<'a>(
+        lookup: &mut <Self::Backend as diesel::sql_types::TypeMetadata>::MetadataLookup,
+    ) -> &mut (dyn std::any::Any + 'a) {
+        C::to_any(lookup)
+    }
+
+    fn from_any(
+        lookup: &mut dyn std::any::Any,
+    ) -> Option<&mut <Self::Backend as diesel::sql_types::TypeMetadata>::MetadataLookup> {
+        C::from_any(lookup)
     }
 }
 
