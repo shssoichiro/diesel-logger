@@ -105,6 +105,17 @@ where
     fn transaction_state(&mut self) -> &mut <Self::TransactionManager as TransactionManager<LoggingConnection<C>>>::TransactionStateData{
         &mut self.transaction_manager
     }
+
+    #[doc = " Get the instrumentation instance stored in this connection"]
+    // #[cfg_attr(not(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"),doc(hidden))]
+    // #[cfg_attr(docsrs,doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")))]
+    fn instrumentation(&mut self) -> &mut dyn diesel::connection::Instrumentation {
+        return self.connection.instrumentation();
+    }
+
+    fn set_instrumentation(&mut self, instrumentation: impl diesel::connection::Instrumentation) {
+        self.connection.set_instrumentation(instrumentation);
+    }
 }
 
 impl<B, C> LoadConnection<B> for LoggingConnection<C>
