@@ -13,7 +13,7 @@ edition = "2021"
 maintenance = { status = "as-is" }
 
 [dependencies]
-diesel = { version = "2.1", features = [
+diesel = { version = "2.2.3", features = [
     "r2d2",
     "i-implement-a-third-party-backend-and-opt-into-breaking-changes",
 ] }
