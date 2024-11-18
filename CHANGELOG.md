@@ -1,4 +1,4 @@
-## Version 0.3.0
+## Version 0.4.0
 
 - Allow to use `LoggingConnection` with `derive(MultiConnection)`
 - Resolve "Not all traits implemented" error
