@@ -1,3 +1,8 @@
+## Version 0.3.0
+
+- Allow to use `LoggingConnection` with `derive(MultiConnection)`
+- Resolve "Not all traits implemented" error
+
 ## Version 0.2.0
 
 - Compatibility with diesel 2.0
